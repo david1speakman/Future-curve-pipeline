@@ -1,0 +1,7 @@
+# Generated pipeline output (changes daily — not tracked)
+output/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
