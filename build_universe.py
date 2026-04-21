@@ -293,6 +293,10 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
         bg  = ROW_BG[rank % 2]
         f   = fmts[bg]
 
+        # Pre-compute refs for the 20-day history range (used by Chg, stats, sparkline)
+        n_ref  = xlsxwriter.utility.xl_rowcol_to_cell(row, CN)       # N{r} — oldest
+        ag_ref = xlsxwriter.utility.xl_rowcol_to_cell(row, CO_END)   # AG{r} — yesterday
+
         # Col A: Full Bloomberg ticker — LARGE/MATCH/INDEX combined
         ws.write_formula(row, CA,
             f'=IFERROR(INDEX({prod_tab_name}!$D:$D,'
@@ -307,7 +311,8 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
 
         # Live BDP data
         ws.write_formula(row, CC, f'=IFERROR(BDP({a},"PX_LAST"),"")',         f['px3'])
-        ws.write_formula(row, CD, f'=IFERROR(BDP({a},"NET_CHNG_1D"),"")',     f['px4'])
+        # Chg = today's live Last minus BDH yesterday (avoids field-name issues)
+        ws.write_formula(row, CD, f'=IFERROR(C{r1}-{ag_ref},"")',              f['px4'])
         ws.write_formula(row, CE, f'=IFERROR(BDP({a},"VOLUME"),"")',           f['num'])
         ws.write_formula(row, CF, f'=IFERROR(BDP({a},"PX_BID"),"")',           f['px3'])
         ws.write_formula(row, CG, f'=IFERROR(BDP({a},"PX_ASK"),"")',           f['px3'])
@@ -315,27 +320,27 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
         ws.write_formula(row, CK, f'=IFERROR(BDP({a},"VOLUME_AVG_20D"),"")',  f['num'])
 
         # Hidden BDH 20-day price history (cols N..AG = 13..32)
+        # Use WORKDAY() inline — more reliable than cell-reference dates
         for offset in range(20):
-            col      = CN + offset
-            date_ref = xlsxwriter.utility.xl_rowcol_to_cell(HDR_ROW, col, row_abs=True)
+            col       = CN + offset
+            days_back = 20 - offset   # col N = -20 bdays, col AG = -1 bday
             ws.write_formula(row, col,
-                f'=IFERROR(BDH({a},"PX_LAST",{date_ref},{date_ref}),"")')
+                f'=IFERROR(BDH({a},"PX_LAST",'
+                f'WORKDAY(TODAY(),-{days_back}),'
+                f'WORKDAY(TODAY(),-{days_back})),"")')
 
         # Hidden 20d stats (Av. in L, StDev in M)
-        n_ref  = xlsxwriter.utility.xl_rowcol_to_cell(row, CN)
-        ag_ref = xlsxwriter.utility.xl_rowcol_to_cell(row, CO_END)
         ws.write_formula(row, CL, f'=IFERROR(AVERAGE({n_ref}:{ag_ref}),"")')
         ws.write_formula(row, CM, f'=IFERROR(STDEV({n_ref}:{ag_ref}),"")')
 
         # Zscore 20d = (Last - Av) / StDev
-        last_ref = f'C{r1}'
-        av_ref   = xlsxwriter.utility.xl_rowcol_to_cell(row, CL)
-        sd_ref   = xlsxwriter.utility.xl_rowcol_to_cell(row, CM)
+        av_ref = xlsxwriter.utility.xl_rowcol_to_cell(row, CL)
+        sd_ref = xlsxwriter.utility.xl_rowcol_to_cell(row, CM)
         ws.write_formula(row, CH,
-            f'=IFERROR(IF({sd_ref}=0,"",({last_ref}-{av_ref})/{sd_ref}),"")',
+            f'=IFERROR(IF({sd_ref}=0,"",(C{r1}-{av_ref})/{sd_ref}),"")',
             f['zsc'])
 
-        # Sparkline cell + sparkline
+        # Sparkline — plot_hidden=True required: source data is in hidden cols
         ws.write_blank(row, CI, f['spk'])
         ws.add_sparkline(row, CI, {
             'range':        f"'{tab_name}'!{n_ref}:{ag_ref}",
@@ -346,6 +351,7 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
             'low_point':    True,
             'high_color':   '#00B050',
             'low_color':    '#FF0000',
+            'plot_hidden':  True,
         })
 
         ws.set_row(row, 18)
