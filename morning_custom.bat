@@ -34,6 +34,10 @@ echo ============================================================
 echo   London Morning Email  --  %*
 echo ============================================================
 echo.
+echo  PRE-REQUISITE: Most.Traded.Universe.xlsx must be open in Excel
+echo  with Bloomberg data fully loaded before continuing.
+echo.
+pause
 
 python morning_email.py %*
 

@@ -244,6 +244,72 @@ def fetch_top10_bloomberg(product, n=10):
     return _build_rows(ranked, detail, hist)
 
 
+# ── Excel fetch via xlwings (reads Bloomberg-populated values from open workbook) ──
+def fetch_top10_excel(product, excel_path=None):
+    """
+    Read Top 10 data from the Most.Traded.Universe.xlsx workbook.
+    Bloomberg must have already populated the formulas (file open in Excel).
+    Columns read: A ticker, B instrument, C last, D chg, E vol, F bid, G offer,
+                  H zscore, J roll, K vol20d, L v_avg, M alert, P:AI history (20d).
+    """
+    try:
+        import xlwings as xw
+    except ImportError:
+        raise RuntimeError('xlwings not installed — run: pip install xlwings')
+
+    tab = f'{product} Top10'
+
+    # Attach to already-open workbook, or open it
+    wb = None
+    for book in xw.books:
+        if 'Most.Traded.Universe' in book.name:
+            wb = book
+            break
+
+    if wb is None:
+        if excel_path is None:
+            excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
+        print(f'\n    Opening {Path(excel_path).name} — wait for Bloomberg to load, '
+              f'then press Enter...', flush=True)
+        wb = xw.Book(str(excel_path))
+        input()   # give the user time to let Bloomberg populate
+
+    ws = wb.sheets[tab]
+    rows = []
+
+    for r in range(3, 13):   # Excel rows 3-12 (data rows 1-10)
+        instr = ws[f'B{r}'].value
+        if not instr:
+            continue
+
+        def _v(cell):
+            v = ws[cell].value
+            return float(v) if isinstance(v, (int, float)) else None
+
+        # 20-day history from cols P(16) to AI(35), 1-indexed
+        raw_hist = ws.range(f'P{r}:AI{r}').value or []
+        history  = [float(v) for v in raw_hist
+                    if v is not None and isinstance(v, (int, float))]
+
+        alert = str(ws[f'M{r}'].value or '')
+
+        rows.append(dict(
+            ticker=str(ws[f'A{r}'].value or f'{instr} Comdty'),
+            instrument=str(instr),
+            last=_v(f'C{r}'),  chg=_v(f'D{r}'),    volume=_v(f'E{r}'),
+            bid=_v(f'F{r}'),   offer=_v(f'G{r}'),   zscore=_v(f'H{r}'),
+            history=history,
+            roll=_v(f'J{r}'),  vol20d=_v(f'K{r}'),  v_avg=_v(f'L{r}'),
+            alert=alert,
+        ))
+
+    if not rows:
+        raise RuntimeError(
+            f'No data found in "{tab}" — make sure Bloomberg has populated the sheet '
+            f'and the product tab has been sorted by Volume.')
+    return rows
+
+
 # ── Mock / demo data (no Bloomberg required) ──────────────────────────────────
 _MOCK_INSTRUMENTS = {
     'SFR': ['SFRM6U6','SFRZ6H7','SFRM6Z6','SFRU6H7','SFRM7U7',
@@ -548,9 +614,11 @@ def main():
                         help='One or more of: SFR SFI ER IR COR')
     parser.add_argument('--all',          action='store_true',
                         help='Run all five currencies')
-    parser.add_argument('--no-bloomberg', action='store_true',
-                        help='Use demo data — no Bloomberg connection required')
-    parser.add_argument('--ib-paste',     action='store_true',
+    parser.add_argument('--no-bloomberg',   action='store_true',
+                        help='Use demo data — no Bloomberg or Excel required')
+    parser.add_argument('--from-bloomberg', action='store_true',
+                        help='Pull data direct from Bloomberg API (requires blpapi)')
+    parser.add_argument('--ib-paste',       action='store_true',
                         help='Paste text table into Bloomberg IB window (Windows only)')
     parser.add_argument('--out',          default='./output', metavar='DIR',
                         help='Output folder (default: ./output)')
@@ -572,7 +640,12 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    fetch_fn = fetch_top10_mock if args.no_bloomberg else fetch_top10_bloomberg
+    if args.no_bloomberg:
+        fetch_fn = fetch_top10_mock
+    elif args.from_bloomberg:
+        fetch_fn = fetch_top10_bloomberg
+    else:
+        fetch_fn = fetch_top10_excel   # default: read from open Excel workbook
     out_dir  = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp    = date.today().strftime('%Y%m%d')
@@ -582,7 +655,10 @@ def main():
 
     print(f'\nLondon Morning Pipeline  —  {date.today():%d %b %Y}')
     print(f'Products : {" ".join(selected)}')
-    print(f'Mode     : {"demo (no Bloomberg)" if args.no_bloomberg else "Bloomberg live"}')
+    mode = 'demo (mock data)' if args.no_bloomberg else \
+           'Bloomberg API (blpapi)' if args.from_bloomberg else \
+           'Excel workbook (xlwings)'
+    print(f'Mode     : {mode}')
     print(f'Output   : {out_dir.resolve()}\n')
 
     for prod in selected:

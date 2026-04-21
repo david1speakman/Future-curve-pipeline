@@ -8,13 +8,16 @@ echo ============================================================
 echo   London Morning Email  --  SFR / ER / SFI
 echo ============================================================
 echo.
+echo  PRE-REQUISITE: Most.Traded.Universe.xlsx must be open in Excel
+echo  with Bloomberg data fully loaded before continuing.
+echo.
+pause
 
 python morning_email.py SFR ER SFI
 
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Pipeline failed — see messages above.
-    echo         Check that Bloomberg terminal is running.
     pause
     exit /b 1
 )
