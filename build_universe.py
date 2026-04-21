@@ -344,9 +344,12 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
                 f'WORKDAY(TODAY(),-{days_back}),'
                 f'WORKDAY(TODAY(),-{days_back}))+0,NA())')
 
-        # AGGREGATE(1/8, 6, range) ignores error cells (#N/A) unlike AVERAGE/STDEV
-        ws.write_formula(row, CAV, f'=IFERROR(AGGREGATE(1,6,{hi0}:{hi1}),"")')
-        ws.write_formula(row, CSD, f'=IFERROR(AGGREGATE(8,6,{hi0}:{hi1}),"")')
+        # Array formulas: IF(ISNUMBER()) filters out NA() cells so AVERAGE/STDEV
+        # only see valid prices — requires write_array_formula (Ctrl+Shift+Enter)
+        ws.write_array_formula(row, CAV, row, CAV,
+            f'=IFERROR(AVERAGE(IF(ISNUMBER({hi0}:{hi1}),{hi0}:{hi1})),"")')
+        ws.write_array_formula(row, CSD, row, CSD,
+            f'=IFERROR(STDEV(IF(ISNUMBER({hi0}:{hi1}),{hi0}:{hi1})),"")')
 
         av = xlsxwriter.utility.xl_rowcol_to_cell(row, CAV)
         sd = xlsxwriter.utility.xl_rowcol_to_cell(row, CSD)
