@@ -389,9 +389,10 @@ def render_table_png(product, rows, dpi=120):
             f"{product} — Most Traded (Top 10)  ·  {cfg['label']}",
             fontsize=10.5, fontweight='bold', color='white', va='center', zorder=2)
 
-    # COEX logo — right-aligned in title bar
-    logo_path = Path(__file__).parent / 'coex_logo.png'
-    if logo_path.exists():
+    # COEX logo — right-aligned in title bar (accepts any coex*.png, case-insensitive)
+    _candidates = sorted(Path(__file__).parent.glob('[Cc]oex*.png'))
+    logo_path = _candidates[0] if _candidates else None
+    if logo_path and logo_path.exists():
         logo_img = plt.imread(str(logo_path))
         logo_h_in = TITLE_H * 0.70          # logo takes 70% of title bar height
         logo_ar   = logo_img.shape[1] / logo_img.shape[0]   # width / height
