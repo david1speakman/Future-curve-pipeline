@@ -330,21 +330,23 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
         ws.write_formula(row, CK, f'=IFERROR(BDP({a},"VOLUME_AVG_20D"),"")', f['num'])
         ws.write_formula(row, CL, f'=IFERROR(E{r1}/K{r1},"")',               f['rat'])
 
-        # Alert: BUY = negative z-score with positive roll; SELL = positive z with negative roll
+        # Alert: blank if ROLL or Zscore missing; BUY = z<0 & roll>0; SELL = z>0 & roll<0
         ws.write_formula(row, CM,
-            f'=IFERROR(IF(AND(H{r1}<0,J{r1}>0),"BUY",'
-            f'IF(AND(H{r1}>0,J{r1}<0),"SELL","")),"")',                       f['alrt'])
+            f'=IF(OR(J{r1}="",H{r1}=""),"",IF(AND(H{r1}<0,J{r1}>0),"BUY",'
+            f'IF(AND(H{r1}>0,J{r1}<0),"SELL","")))',                           f['alrt'])
 
         # BDH 20-day price history (P=15 … AI=34) — narrow cols, not hidden
+        # +0 forces numeric; IFERROR returns NA() so sparklines skip the point (not plot as zero)
         for offset in range(20):
             days_back = 20 - offset
             ws.write_formula(row, CHI0 + offset,
                 f'=IFERROR(BDH({a},"PX_LAST",'
                 f'WORKDAY(TODAY(),-{days_back}),'
-                f'WORKDAY(TODAY(),-{days_back})),"")')
+                f'WORKDAY(TODAY(),-{days_back}))+0,NA())')
 
-        ws.write_formula(row, CAV, f'=IFERROR(AVERAGE({hi0}:{hi1}),"")')
-        ws.write_formula(row, CSD, f'=IFERROR(STDEV({hi0}:{hi1}),"")')
+        # AGGREGATE(1/8, 6, range) ignores error cells (#N/A) unlike AVERAGE/STDEV
+        ws.write_formula(row, CAV, f'=IFERROR(AGGREGATE(1,6,{hi0}:{hi1}),"")')
+        ws.write_formula(row, CSD, f'=IFERROR(AGGREGATE(8,6,{hi0}:{hi1}),"")')
 
         av = xlsxwriter.utility.xl_rowcol_to_cell(row, CAV)
         sd = xlsxwriter.utility.xl_rowcol_to_cell(row, CSD)
@@ -361,6 +363,7 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
             'low_point':    True,
             'high_color':   '#00B050',
             'low_color':    '#FF0000',
+            'empty_cells':  'connect',
         })
 
         ws.set_row(row, 18)
