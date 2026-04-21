@@ -180,16 +180,16 @@ def add_universe_sheet(wb, title, rows, dark_hex, light_hex):
     return ws
 
 
-# ── Display tab (Top 15 by volume, matching Fut.flow.curve secondary table) ───
+# ── Display tab (Top 10 by volume, matching Fut.flow.curve secondary table) ───
 def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
-    """Top 15 display tab: Instrument|Last|Chg|Volume|Bid|Offer|Zscore|Sparkline|ROLL|Vol20d|V/Avg."""
-    tab_name = f'{product} Top15'
+    """Top 10 display tab: Instrument|Last|Chg|Volume|Bid|Offer|Zscore|Sparkline|ROLL|Vol20d|V/Avg|Alert."""
+    tab_name = f'{product} Top10'
     ws = wb.add_worksheet(tab_name)
 
     TITLE_ROW  = 0
-    HDR_ROW    = 1   # 0-indexed → Excel row 2
-    DATA_START = 2   # 0-indexed → Excel row 3
-    NROWS      = 15
+    HDR_ROW    = 1
+    DATA_START = 2
+    NROWS      = 10
 
     # ── Visible column indices ─────────────────────────────────────────────
     CA = 0   # A: full Bloomberg ticker (hidden — drives BDP/BDH)
@@ -199,31 +199,33 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
     CE = 4   # E: Volume
     CF = 5   # F: Bid
     CG = 6   # G: Offer
-    CH = 7   # H: Zscore 20d  ← two-tier conditional format
+    CH = 7   # H: Zscore 20d
     CI = 8   # I: 20d moves (sparkline)
     CJ = 9   # J: ROLL
     CK = 10  # K: Volume 20d Av.
-    CL = 11  # L: V/Avg  (today's volume ÷ 20d average — shows unusual activity)
-    # ── Hidden stat + history columns ─────────────────────────────────────
-    CAV  = 12  # M: Av. 20d
-    CSD  = 13  # N: StDev 20d
-    CHI0 = 14  # O: BDH history start  (20 cols: O=14 … AH=33)
-    CHI1 = 33  # AH: BDH history end
+    CL = 11  # L: V/Avg
+    CM = 12  # M: Alert (BUY / SELL signal)
+    # ── Stat + history columns — narrow but NOT hidden so sparklines render ──
+    CAV  = 13  # N: Av. 20d
+    CSD  = 14  # O: StDev 20d
+    CHI0 = 15  # P: BDH history start  (20 cols: P=15 … AI=34)
+    CHI1 = 34  # AI: BDH history end
 
     # ── Column widths ──────────────────────────────────────────────────────
     ws.set_column(CA,  CA,  None, None, {'hidden': True})  # A: hidden ticker
-    ws.set_column(CB,  CB,  14)    # B: Instrument
-    ws.set_column(CC,  CC,  10)    # C: Last
-    ws.set_column(CD,  CD,  10)    # D: Chg
-    ws.set_column(CE,  CE,  10)    # E: Volume
-    ws.set_column(CF,  CF,   9)    # F: Bid
-    ws.set_column(CG,  CG,   9)    # G: Offer
-    ws.set_column(CH,  CH,  11)    # H: Zscore 20d
-    ws.set_column(CI,  CI,  22)    # I: 20d moves sparkline
-    ws.set_column(CJ,  CJ,  10)    # J: ROLL
-    ws.set_column(CK,  CK,  14)    # K: Volume 20d Av.
-    ws.set_column(CL,  CL,   9)    # L: V/Avg
-    ws.set_column(CAV, CHI1, None, None, {'hidden': True})  # M-AH: stats + history
+    ws.set_column(CB,  CB,  14)
+    ws.set_column(CC,  CC,  10)
+    ws.set_column(CD,  CD,  10)
+    ws.set_column(CE,  CE,  10)
+    ws.set_column(CF,  CF,   9)
+    ws.set_column(CG,  CG,   9)
+    ws.set_column(CH,  CH,  11)
+    ws.set_column(CI,  CI,  22)
+    ws.set_column(CJ,  CJ,  10)
+    ws.set_column(CK,  CK,  14)
+    ws.set_column(CL,  CL,   9)
+    ws.set_column(CM,  CM,   8)
+    ws.set_column(CAV, CHI1, 3)   # narrow but visible — Excel sparklines skip hidden cols
 
     # ── Formats ───────────────────────────────────────────────────────────
     title_fmt = wb.add_format({
@@ -236,15 +238,19 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
     })
     date_hdr_fmt = wb.add_format({'num_format': 'dd-mmm', 'font_size': 7})
 
-    # Cell-rule formats for pronounced Z-score colouring (|z| ≥ 1)
-    cf_grn  = wb.add_format({'bg_color': '#00B050', 'font_color': 'white',
-                              'bold': True, 'border': 1, 'align': 'right',
-                              'num_format': '0.00', 'font_size': 10})
-    cf_red  = wb.add_format({'bg_color': '#FF0000', 'font_color': 'white',
-                              'bold': True, 'border': 1, 'align': 'right',
-                              'num_format': '0.00', 'font_size': 10})
+    cf_grn = wb.add_format({'bg_color': '#00B050', 'font_color': 'white',
+                             'bold': True, 'border': 1, 'align': 'right',
+                             'num_format': '0.00', 'font_size': 10})
+    cf_red = wb.add_format({'bg_color': '#FF0000', 'font_color': 'white',
+                             'bold': True, 'border': 1, 'align': 'right',
+                             'num_format': '0.00', 'font_size': 10})
+    alert_buy_fmt  = wb.add_format({'bg_color': '#00B050', 'font_color': 'white',
+                                    'bold': True, 'border': 1, 'align': 'center',
+                                    'font_size': 10})
+    alert_sell_fmt = wb.add_format({'bg_color': '#FF0000', 'font_color': 'white',
+                                    'bold': True, 'border': 1, 'align': 'center',
+                                    'font_size': 10})
 
-    # Data row formats (two alternating row backgrounds)
     ROW_BG = ['#FFFFFF', '#F5F5F5']
     fmts = {}
     for bg in ROW_BG:
@@ -269,85 +275,82 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
                                    'valign': 'vcenter', 'num_format': '0.0"x"',
                                    'font_size': 10}),
             'spk':  wb.add_format({'bg_color': bg, 'border': 1, 'valign': 'vcenter'}),
+            'alrt': wb.add_format({'bg_color': bg, 'border': 1, 'align': 'center',
+                                   'valign': 'vcenter', 'font_size': 10}),
         }
 
     note_fmt = wb.add_format({'italic': True, 'font_size': 9, 'font_color': '#808080'})
 
     # ── Row 0: product-coloured title bar ─────────────────────────────────
-    ws.merge_range(TITLE_ROW, CA, TITLE_ROW, CL,
-                   f'{product} — Most Traded (Top 15)', title_fmt)
+    ws.merge_range(TITLE_ROW, CA, TITLE_ROW, CM,
+                   f'{product} — Most Traded (Top 10)', title_fmt)
     ws.set_row(TITLE_ROW, 18)
 
     # ── Row 1: header ─────────────────────────────────────────────────────
     for ci, label in {CB: 'Instrument', CC: 'Last', CD: 'Chg',   CE: 'Volume',
                       CF: 'Bid',        CG: 'Offer', CH: 'Zscore 20d',
                       CI: '20d moves',  CJ: 'ROLL',  CK: 'Volume 20d Av.',
-                      CL: 'V/Avg'}.items():
+                      CL: 'V/Avg',     CM: 'Alert'}.items():
         ws.write(HDR_ROW, ci, label, hdr_fmt)
     ws.set_row(HDR_ROW, 18)
 
-    # Date headers in hidden BDH history cols (O=14 … AH=33, 20 cols)
     for offset in range(20):
         ws.write_formula(HDR_ROW, CHI0 + offset,
                          f'=WORKDAY(TODAY(),-{20 - offset})', date_hdr_fmt)
 
     ws.freeze_panes(DATA_START, 0)
 
-    # ── Data rows 2..16 ───────────────────────────────────────────────────
+    # ── Data rows 2..11 ───────────────────────────────────────────────────
     for rank in range(NROWS):
         row = DATA_START + rank
-        r1  = row + 1        # Excel 1-indexed
+        r1  = row + 1
         bg  = ROW_BG[rank % 2]
         f   = fmts[bg]
 
-        # Pre-compute BDH history cell refs (oldest → newest; newest = yesterday)
-        hi0 = xlsxwriter.utility.xl_rowcol_to_cell(row, CHI0)  # O{r}
-        hi1 = xlsxwriter.utility.xl_rowcol_to_cell(row, CHI1)  # AH{r} = yesterday
+        hi0 = xlsxwriter.utility.xl_rowcol_to_cell(row, CHI0)
+        hi1 = xlsxwriter.utility.xl_rowcol_to_cell(row, CHI1)
 
-        # Col A: full Bloomberg ticker via LARGE/MATCH/INDEX auto-rank
         ws.write_formula(row, CA,
             f'=IFERROR(INDEX({prod_tab_name}!$D:$D,'
             f'MATCH(LARGE({prod_tab_name}!$G:$G,{rank+1}),'
             f'{prod_tab_name}!$G:$G,0)),"")')
 
-        a = f'A{r1}'   # ticker reference used by all BDP/BDH below
+        a = f'A{r1}'
 
-        # Col B: display name (strip " Comdty")
         ws.write_formula(row, CB,
             f'=IFERROR(SUBSTITUTE({a}," Comdty",""),"")', f['bold'])
 
-        # Cols C-K: live BDP data
         ws.write_formula(row, CC, f'=IFERROR(BDP({a},"PX_LAST"),"")',        f['px3'])
         ws.write_formula(row, CD, f'=IFERROR(C{r1}-{hi1},"")',               f['px4'])
         ws.write_formula(row, CE, f'=IFERROR(BDP({a},"VOLUME"),"")',          f['num'])
         ws.write_formula(row, CF, f'=IFERROR(BDP({a},"PX_BID"),"")',          f['px3'])
         ws.write_formula(row, CG, f'=IFERROR(BDP({a},"PX_ASK"),"")',          f['px3'])
-        # VALUE() strips Bloomberg's "#N/A Field Not Applicable" text string
         ws.write_formula(row, CJ,
             f'=IFERROR(VALUE(BDP({a},"ROLL_DOWN_VALUE")),"")',                 f['px3'])
         ws.write_formula(row, CK, f'=IFERROR(BDP({a},"VOLUME_AVG_20D"),"")', f['num'])
-        # V/Avg: today's volume ÷ 20d average (>1 = busier than usual)
         ws.write_formula(row, CL, f'=IFERROR(E{r1}/K{r1},"")',               f['rat'])
 
-        # Hidden BDH 20-day price history (O=14 … AH=33)
+        # Alert: BUY = negative z-score with positive roll; SELL = positive z with negative roll
+        ws.write_formula(row, CM,
+            f'=IFERROR(IF(AND(H{r1}<0,J{r1}>0),"BUY",'
+            f'IF(AND(H{r1}>0,J{r1}<0),"SELL","")),"")',                       f['alrt'])
+
+        # BDH 20-day price history (P=15 … AI=34) — narrow cols, not hidden
         for offset in range(20):
-            days_back = 20 - offset   # O = -20 bdays … AH = -1 bday
+            days_back = 20 - offset
             ws.write_formula(row, CHI0 + offset,
                 f'=IFERROR(BDH({a},"PX_LAST",'
                 f'WORKDAY(TODAY(),-{days_back}),'
                 f'WORKDAY(TODAY(),-{days_back})),"")')
 
-        # Hidden 20d stats
         ws.write_formula(row, CAV, f'=IFERROR(AVERAGE({hi0}:{hi1}),"")')
         ws.write_formula(row, CSD, f'=IFERROR(STDEV({hi0}:{hi1}),"")')
 
-        # Col H: Zscore = (Last - Av) / StDev
         av = xlsxwriter.utility.xl_rowcol_to_cell(row, CAV)
         sd = xlsxwriter.utility.xl_rowcol_to_cell(row, CSD)
         ws.write_formula(row, CH,
             f'=IFERROR(IF({sd}=0,"",(C{r1}-{av})/{sd}),"")', f['zsc'])
 
-        # Col I: 20d moves sparkline (plot_hidden needed — source cols are hidden)
         ws.write_blank(row, CI, f['spk'])
         ws.add_sparkline(row, CI, {
             'range':        f"'{tab_name}'!{hi0}:{hi1}",
@@ -358,19 +361,16 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
             'low_point':    True,
             'high_color':   '#00B050',
             'low_color':    '#FF0000',
-            'plot_hidden':  True,
         })
 
         ws.set_row(row, 18)
 
     # ── Z-score conditional format: two-tier ──────────────────────────────
-    # Tier 1 (highest priority): vivid solid colour for |z| ≥ 1
     r0, r1_ = DATA_START, DATA_START + NROWS - 1
     ws.conditional_format(r0, CH, r1_, CH, {
         'type': 'cell', 'criteria': '>=', 'value': 1, 'format': cf_grn})
     ws.conditional_format(r0, CH, r1_, CH, {
         'type': 'cell', 'criteria': '<=', 'value': -1, 'format': cf_red})
-    # Tier 2 (lower priority): smooth gradient for |z| < 1
     ws.conditional_format(r0, CH, r1_, CH, {
         'type':     '3_color_scale',
         'min_type': 'num', 'min_value': -1, 'min_color': '#FF6666',
@@ -378,10 +378,17 @@ def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
         'max_type': 'num', 'max_value':  1, 'max_color': '#92D050',
     })
 
-    # Note
+    # ── Alert conditional format ───────────────────────────────────────────
+    ws.conditional_format(r0, CM, r1_, CM, {
+        'type': 'text', 'criteria': 'containing', 'value': 'BUY',
+        'format': alert_buy_fmt})
+    ws.conditional_format(r0, CM, r1_, CM, {
+        'type': 'text', 'criteria': 'containing', 'value': 'SELL',
+        'format': alert_sell_fmt})
+
     ws.write(DATA_START + NROWS + 1, CB,
              f'Sort [{prod_tab_name}] by Volume (col G) desc to rank.  '
-             f'V/Avg > 1 = above-average activity today.', note_fmt)
+             f'Alert: BUY = z<0 & roll>0 (cheap & carry+);  SELL = z>0 & roll<0.', note_fmt)
 
     return ws
 
@@ -424,11 +431,11 @@ notes = [
     ('body', 'ER            — Euribor structures only (data).'),
     ('body', 'IR            — Australian Bank Bills only (data).'),
     ('body', 'COR           — Canadian CORRA only (data).'),
-    ('body', 'SFR Top15     — Most traded SOFR structures with sparklines + z-scores.'),
-    ('body', 'SFI Top15     — Most traded SONIA structures with sparklines + z-scores.'),
-    ('body', 'ER Top15      — Most traded Euribor structures with sparklines + z-scores.'),
-    ('body', 'IR Top15      — Most traded AUD Bank Bill structures with sparklines + z-scores.'),
-    ('body', 'COR Top15     — Most traded CORRA structures with sparklines + z-scores.'),
+    ('body', 'SFR Top10     — Most traded SOFR structures with sparklines, z-scores + alerts.'),
+    ('body', 'SFI Top10     — Most traded SONIA structures with sparklines, z-scores + alerts.'),
+    ('body', 'ER Top10      — Most traded Euribor structures with sparklines, z-scores + alerts.'),
+    ('body', 'IR Top10      — Most traded AUD Bank Bill structures with sparklines, z-scores + alerts.'),
+    ('body', 'COR Top10     — Most traded CORRA structures with sparklines, z-scores + alerts.'),
     ('', ''),
     ('head', 'TICKER FORMAT — CONFIRMED'),
     ('body', 'Spreads:  SFR/SFI/COR: {prefix}{near}{far}      e.g. SFRM6U6 Comdty'),
