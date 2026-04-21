@@ -1,15 +1,14 @@
 """
 Most Traded Universe - Excel Generator
 Creates Most.Traded.Universe.xlsx with all spread/fly/condor permutations
-for SFR, SFI, ER, IR, BA futures, with Bloomberg BDP volume formulas.
+for SFR, SFI, ER, IR, COR futures, with Bloomberg BDP volume formulas
+and per-currency Top 15 display tabs with sparklines.
 
 Ticker conventions (confirmed):
-  Spreads:  SFR/SFI/IR/BA: {prefix}{near}{far}  e.g. SFRM6U6
-            ER: ER{near}ER{far}                  e.g. ERM6ERU6
-  Flies:    B{prefix}{near_wing}{far_wing}        e.g. BSFRM6Z6
-            Prefixes: SFR→BSFR, SFI→BSFI, ER→BER, IR→BIR, BA→BBA(unconfirmed)
-  Condors:  C{prefix}{first}{last}               e.g. CSFRM6H7
-            SFR only (not exchange-listed for other products)
+  Spreads:  SFR/SFI/COR: {prefix}{near}{far}       e.g. SFRM6U6 Comdty
+            ER/IR: {prefix}{near}{prefix}{far}       e.g. ERM6ERU6, IRM6IRU6
+  Flies:    B{prefix}{near_wing}{far_wing}           e.g. BSFRM6Z6 Comdty
+  Condors:  C{prefix}{first}{last}                   e.g. CSFRM6H7 Comdty (SFR only)
 """
 import xlsxwriter
 
@@ -49,14 +48,14 @@ PRODUCTS = {
         'dark': '#375623', 'light': '#D9EAD3',
     },
     'IR': {
-        'spread': lambda a, b: f'IR{a}{b} Comdty',
+        'spread': lambda a, b: f'IR{a}IR{b} Comdty',   # interleaved like ER
         'fly':    lambda a, c: f'BIR{a}{c} Comdty',
         'condor': None,
         'dark': '#5B0A9F', 'light': '#E8DAEF',
     },
-    'BA': {
-        'spread': lambda a, b: f'BA{a}{b} Comdty',
-        'fly':    lambda a, c: f'BBA{a}{c} Comdty',
+    'COR': {
+        'spread': lambda a, b: f'COR{a}{b} Comdty',    # Canadian CORRA (was BA)
+        'fly':    lambda a, c: f'BCOR{a}{c} Comdty',
         'condor': None,
         'dark': '#C00000', 'light': '#FFE0E0',
     },
@@ -82,12 +81,11 @@ for product, cfg in PRODUCTS.items():
                          cfg['spread'](a, b), f'{a}-{b}', ''))
 
     for n, months in FLY_STEPS:
-        note = 'BBA prefix unconfirmed' if product == 'BA' else ''
         for i in range(N - 2*n):
             a, b, c = EXPIRIES[i], EXPIRIES[i+n], EXPIRIES[i+2*n]
             rows.append((product, f'Fly {months}m',
                          f'{LABELS[a]} / {LABELS[b]} / {LABELS[c]}',
-                         cfg['fly'](a, c), f'{a}-{b}-{c}', note))
+                         cfg['fly'](a, c), f'{a}-{b}-{c}', ''))
 
     if cfg['condor']:
         for n, months in CONDOR_STEPS:
@@ -114,7 +112,7 @@ for exp in EXPIRIES[:16]:
             f'SFI {tenor} from {LABELS[exp]}',
             f'SFI{tenor}{exp} Comdty', exp, ''))
 
-# ER basis
+# ER basis (ESTR vs Euribor)
 for exp in EXPIRIES[:16]:
     all_rows['ER'].append(('ER', 'Basis ESTR/EUR',
         f'ESTR vs Euribor {LABELS[exp]}',
@@ -137,28 +135,24 @@ HEADERS = ['Product','Type','Description','Bloomberg Ticker',
            'Legs','Notes','Volume','Bid','Ask','Last Price']
 COL_W   = [8, 16, 36, 26, 16, 28, 10, 9, 9, 11]
 
+
 def add_universe_sheet(wb, title, rows, dark_hex, light_hex):
     """Write a sheet with headers + data rows + BDP formulas."""
     ws = wb.add_worksheet(title)
 
-    # Formats
     hdr_fmt = wb.add_format({
         'bold': True, 'font_color': 'white',
         'bg_color': dark_hex, 'border': 1,
-        'align': 'center', 'valign': 'vcenter',
-        'font_size': 10,
+        'align': 'center', 'valign': 'vcenter', 'font_size': 10,
     })
     num_fmt = wb.add_format({
         'bg_color': light_hex, 'border': 1,
-        'align': 'right', 'valign': 'vcenter',
-        'num_format': '#,##0',
+        'align': 'right', 'valign': 'vcenter', 'num_format': '#,##0',
     })
     txt_fmt = wb.add_format({
-        'bg_color': light_hex, 'border': 1,
-        'valign': 'vcenter',
+        'bg_color': light_hex, 'border': 1, 'valign': 'vcenter',
     })
 
-    # Headers
     for col, (h, w) in enumerate(zip(HEADERS, COL_W)):
         ws.write(0, col, h, hdr_fmt)
         ws.set_column(col, col, w)
@@ -166,25 +160,225 @@ def add_universe_sheet(wb, title, rows, dark_hex, light_hex):
     ws.freeze_panes(1, 0)
     ws.autofilter(0, 0, len(rows), len(HEADERS)-1)
 
-    # Data rows
     for ri, row in enumerate(rows, 1):
         product = row[0]
         p_light = PRODUCTS[product]['light']
-        p_dark  = PRODUCTS[product]['dark']
 
         row_txt = wb.add_format({
             'bg_color': p_light, 'border': 1, 'valign': 'vcenter'})
         row_num = wb.add_format({
             'bg_color': p_light, 'border': 1,
-            'align': 'right', 'valign': 'vcenter',
-            'num_format': '#,##0'})
+            'align': 'right', 'valign': 'vcenter', 'num_format': '#,##0'})
 
         for ci, val in enumerate(row):
             ws.write(ri, ci, val, row_txt)
 
         ticker_cell = xlsxwriter.utility.xl_rowcol_to_cell(ri, 3)  # col D
-        for ci, field in zip(range(6,10), ('VOLUME','PX_BID','PX_ASK','PX_LAST')):
+        for ci, field in zip(range(6, 10), ('VOLUME','PX_BID','PX_ASK','PX_LAST')):
             ws.write_formula(ri, ci, f'=BDP({ticker_cell},"{field}")', row_num)
+
+    return ws
+
+
+# ── Display tab (Top 15 by volume, Fut.flow.curve style) ─────────────────────
+def add_display_tab(wb, product, prod_tab_name, dark_hex, light_hex):
+    """Top 15 display tab with sparklines + 20d stats, auto-ranked by volume."""
+    tab_name = f'{product} Top15'
+    ws = wb.add_worksheet(tab_name)
+
+    HDR_ROW    = 4   # 0-indexed → Excel row 5
+    DATA_START = 5   # 0-indexed → Excel row 6
+    NROWS      = 15
+    SPARK_COL  = 31  # col AF
+    HIST_START = 32  # col AG
+    HIST_END   = 54  # col BC  (23 cols)
+
+    # ── Column widths ──────────────────────────────────────────────────────
+    ws.set_column(0, 1,   0)    # A,B: hidden helpers
+    ws.set_column(2, 2,  24)    # C: Ticker
+    ws.set_column(3, 3,  38)    # D: Description
+    ws.set_column(4, 4,  10)    # E: BidVol
+    ws.set_column(5, 5,   9)    # F: Bid
+    ws.set_column(6, 6,   9)    # G: Ask
+    ws.set_column(7, 7,  10)    # H: AskVol
+    ws.set_column(8, 8,  12)    # I: CumVol
+    ws.set_column(9, 9,  11)    # J: Last
+    ws.set_column(10, 10, 26)   # K: TrdTm
+    ws.set_column(11, 11, 14)   # L: Strategy Type
+    ws.set_column(28, 28, 11)   # AC: Av. 20d
+    ws.set_column(29, 29, 11)   # AD: StDev 20d
+    ws.set_column(30, 30, 10)   # AE: ZScore 20d
+    ws.set_column(31, 31, 18)   # AF: Sparkline
+    for c in range(32, 55):
+        ws.set_column(c, c, 7)  # AG-BC: history
+
+    # ── Formats ───────────────────────────────────────────────────────────
+    title_fmt = wb.add_format({
+        'bold': True, 'font_size': 14, 'font_color': 'white',
+        'bg_color': dark_hex, 'align': 'left', 'valign': 'vcenter',
+    })
+    hdr_dk = wb.add_format({
+        'bold': True, 'font_color': 'white', 'bg_color': dark_hex,
+        'border': 1, 'align': 'center', 'valign': 'vcenter',
+        'font_size': 10, 'text_wrap': True,
+    })
+    hdr_lt = wb.add_format({
+        'bold': True, 'font_color': dark_hex, 'bg_color': light_hex,
+        'border': 1, 'align': 'center', 'valign': 'vcenter',
+        'font_size': 9, 'text_wrap': True,
+    })
+    date_hdr = wb.add_format({
+        'bg_color': '#D8D8D8', 'border': 1, 'align': 'center',
+        'valign': 'vcenter', 'font_size': 8, 'num_format': 'dd-mmm',
+    })
+    ticker_fmt = wb.add_format({
+        'bg_color': light_hex, 'border': 1, 'valign': 'vcenter',
+        'font_size': 10, 'bold': True,
+    })
+    desc_fmt = wb.add_format({
+        'bg_color': light_hex, 'border': 1, 'valign': 'vcenter', 'font_size': 9,
+    })
+    type_fmt = wb.add_format({
+        'bg_color': light_hex, 'border': 1, 'valign': 'vcenter',
+        'font_size': 9, 'align': 'center',
+    })
+    num_fmt = wb.add_format({
+        'bg_color': light_hex, 'border': 1, 'align': 'right',
+        'valign': 'vcenter', 'num_format': '#,##0', 'font_size': 10,
+    })
+    price_fmt = wb.add_format({
+        'bg_color': light_hex, 'border': 1, 'align': 'right',
+        'valign': 'vcenter', 'num_format': '0.000', 'font_size': 10,
+    })
+    stats_fmt = wb.add_format({
+        'bg_color': '#FFF2CC', 'border': 1, 'align': 'right',
+        'valign': 'vcenter', 'num_format': '0.0000', 'font_size': 9,
+    })
+    zscore_fmt = wb.add_format({
+        'bg_color': '#FFF2CC', 'border': 1, 'align': 'right',
+        'valign': 'vcenter', 'num_format': '0.00', 'font_size': 9,
+    })
+    bdh_fmt = wb.add_format({
+        'bg_color': '#F5F5F5', 'border': 0, 'align': 'right',
+        'valign': 'vcenter', 'num_format': '0.000',
+        'font_size': 7, 'font_color': '#AAAAAA',
+    })
+    spark_fmt = wb.add_format({
+        'bg_color': '#F0F8FF', 'border': 1, 'valign': 'vcenter',
+    })
+    note_fmt = wb.add_format({
+        'italic': True, 'font_size': 9, 'font_color': '#808080',
+    })
+
+    # ── Title row ─────────────────────────────────────────────────────────
+    ws.merge_range(0, 0, 0, 54,
+        f'{product} — Most Traded (Top 15)  |  Sort [{prod_tab_name}] col G descending to rank by volume',
+        title_fmt)
+    ws.set_row(0, 26)
+    for r in range(1, 4):
+        ws.set_row(r, 5)
+
+    # ── Header row (row 4, Excel 5) ───────────────────────────────────────
+    main_hdrs = {
+        2: 'Bloomberg\nTicker', 3: 'Description',
+        4: 'BidVol', 5: 'Bid', 6: 'Ask', 7: 'AskVol',
+        8: 'CumVol', 9: 'Last\nPrice', 10: 'Trade Time', 11: 'Strategy\nType',
+    }
+    for ci, label in main_hdrs.items():
+        ws.write(HDR_ROW, ci, label, hdr_dk)
+
+    stat_hdrs = {28: 'Av.\n20d', 29: 'StDev\n20d', 30: 'ZScore\n20d'}
+    for ci, label in stat_hdrs.items():
+        ws.write(HDR_ROW, ci, label, hdr_lt)
+
+    ws.write(HDR_ROW, SPARK_COL, f'{product} — 20d Sparkline', hdr_lt)
+
+    # Date headers for BDH columns (AG-BC, 23 business days)
+    for offset in range(23):
+        col = HIST_START + offset
+        days_back = 23 - offset  # 23 → 1
+        ws.write_formula(HDR_ROW, col, f'=WORKDAY(TODAY(),-{days_back})', date_hdr)
+
+    ws.set_row(HDR_ROW, 30)
+    ws.freeze_panes(DATA_START, 3)
+
+    # ── Data rows ─────────────────────────────────────────────────────────
+    # Product tab layout: A=Product, B=Type, C=Description, D=Ticker(Bloomberg),
+    #                     E=Legs, F=Notes, G=Volume(BDP), H=Bid, I=Ask, J=Last
+    for rank in range(NROWS):
+        row = DATA_START + rank
+        r1  = row + 1  # 1-indexed for formula strings
+
+        # Cols A,B: hidden helpers for auto-ranking by Volume
+        ws.write_formula(row, 0,
+            f'=IFERROR(LARGE({prod_tab_name}!$G:$G,{rank+1}),0)')
+        ws.write_formula(row, 1,
+            f'=IFERROR(MATCH(A{r1},{prod_tab_name}!$G:$G,0),0)')
+
+        # Col C: Bloomberg Ticker (from product tab col D)
+        ws.write_formula(row, 2,
+            f'=IFERROR(INDEX({prod_tab_name}!$D:$D,B{r1}),"")', ticker_fmt)
+
+        # Col D: Description (from product tab col C)
+        ws.write_formula(row, 3,
+            f'=IFERROR(INDEX({prod_tab_name}!$C:$C,B{r1}),"")', desc_fmt)
+
+        c = f'C{r1}'  # ticker cell reference for BDP/BDH
+
+        # Cols E-K: live BDP data
+        ws.write_formula(row, 4,  f'=IFERROR(BDP({c},"BID_SIZE"),"")',                num_fmt)
+        ws.write_formula(row, 5,  f'=IFERROR(BDP({c},"PX_BID"),"")',                  price_fmt)
+        ws.write_formula(row, 6,  f'=IFERROR(BDP({c},"PX_ASK"),"")',                  price_fmt)
+        ws.write_formula(row, 7,  f'=IFERROR(BDP({c},"ASK_SIZE"),"")',                num_fmt)
+        ws.write_formula(row, 8,  f'=IFERROR(BDP({c},"VOLUME"),"")',                  num_fmt)
+        ws.write_formula(row, 9,  f'=IFERROR(BDP({c},"PX_LAST"),"")',                 price_fmt)
+        ws.write_formula(row, 10, f'=IFERROR(BDP({c},"LAST_UPDATE_DT_EXCH_TZ"),"")', desc_fmt)
+
+        # Col L: Strategy Type (from product tab col B)
+        ws.write_formula(row, 11,
+            f'=IFERROR(INDEX({prod_tab_name}!$B:$B,B{r1}),"")', type_fmt)
+
+        # Cols AG-BC: 23-day BDH history (date from header row)
+        for offset in range(23):
+            col      = HIST_START + offset
+            date_ref = xlsxwriter.utility.xl_rowcol_to_cell(HDR_ROW, col, row_abs=True)
+            ws.write_formula(row, col,
+                f'=IFERROR(BDH({c},"PX_LAST",{date_ref},{date_ref}),"")', bdh_fmt)
+
+        # Cols AC-AE: 20d statistics
+        ag = xlsxwriter.utility.xl_rowcol_to_cell(row, HIST_START)
+        bc = xlsxwriter.utility.xl_rowcol_to_cell(row, HIST_END)
+        av = xlsxwriter.utility.xl_rowcol_to_cell(row, 28)
+        sd = xlsxwriter.utility.xl_rowcol_to_cell(row, 29)
+        jp = f'J{r1}'  # last price
+
+        ws.write_formula(row, 28, f'=IFERROR(AVERAGE({ag}:{bc}),"")', stats_fmt)
+        ws.write_formula(row, 29, f'=IFERROR(STDEV({ag}:{bc}),"")',   stats_fmt)
+        ws.write_formula(row, 30,
+            f'=IFERROR(IF({sd}=0,"",({jp}-{av})/{sd}),"")', zscore_fmt)
+
+        # Col AF: sparkline placeholder + sparkline
+        ws.write_blank(row, SPARK_COL, spark_fmt)
+        ag_cell = xlsxwriter.utility.xl_rowcol_to_cell(row, HIST_START)
+        bc_cell = xlsxwriter.utility.xl_rowcol_to_cell(row, HIST_END)
+        ws.add_sparkline(row, SPARK_COL, {
+            'range':        f"'{tab_name}'!{ag_cell}:{bc_cell}",
+            'type':         'line',
+            'weight':       1.5,
+            'series_color': dark_hex,
+            'high_point':   True,
+            'low_point':    True,
+            'high_color':   '#00B050',
+            'low_color':    '#FF0000',
+        })
+
+        ws.set_row(row, 20)
+
+    # Note below data
+    note_row = DATA_START + NROWS + 1
+    ws.write(note_row, 2,
+        f'Sort [{prod_tab_name}] tab by Volume (col G) descending, then press F9 to refresh Bloomberg.',
+        note_fmt)
 
     return ws
 
@@ -192,12 +386,15 @@ def add_universe_sheet(wb, title, rows, dark_hex, light_hex):
 # ── Universe tab ─────────────────────────────────────────────────────────────
 add_universe_sheet(wb, 'Universe', universe, '#1F497D', '#EBF1F8')
 
-
-# ── Per-product ranked tabs ───────────────────────────────────────────────────
+# ── Per-product data tabs ─────────────────────────────────────────────────────
 for product, rows in all_rows.items():
-    dark  = PRODUCTS[product]['dark']
-    light = PRODUCTS[product]['light']
-    add_universe_sheet(wb, f'{product}', rows, dark, light)
+    add_universe_sheet(wb, product, rows,
+                       PRODUCTS[product]['dark'], PRODUCTS[product]['light'])
+
+# ── Per-currency Top 15 display tabs ─────────────────────────────────────────
+for product in PRODUCTS:
+    add_display_tab(wb, product, product,
+                    PRODUCTS[product]['dark'], PRODUCTS[product]['light'])
 
 
 # ── Notes tab ────────────────────────────────────────────────────────────────
@@ -217,32 +414,37 @@ notes = [
     ('body', '1.  Open in Excel with Bloomberg Add-in active (Bloomberg must be running).'),
     ('body', '2.  BDP formulas refresh automatically when Bloomberg connects.'),
     ('body', '3.  Force refresh: Data → Refresh All, or press F9.'),
-    ('body', '4.  To rank by volume: select any cell in Volume col → Data → Sort Z→A.'),
+    ('body', '4.  To rank by volume on a data tab: select any cell in Volume col → Data → Sort Z→A.'),
+    ('body', '5.  The Top15 display tabs auto-update once you sort the matching data tab by Volume.'),
     ('', ''),
     ('head', 'TABS'),
-    ('body', 'Universe  — All 5 products combined. Use auto-filter to slice by Product/Type.'),
-    ('body', 'SFR       — SOFR structures only.'),
-    ('body', 'SFI       — SONIA structures only.'),
-    ('body', 'ER        — Euribor structures only.'),
-    ('body', 'IR        — Australian Bank Bills only.'),
-    ('body', 'BA        — Canadian BAs only.'),
-    ('body', 'Sort any tab by Volume (col G) descending to see the most traded structures.'),
+    ('body', 'Universe      — All 5 products combined. Use auto-filter to slice by Product/Type.'),
+    ('body', 'SFR           — SOFR structures only (data).'),
+    ('body', 'SFI           — SONIA structures only (data).'),
+    ('body', 'ER            — Euribor structures only (data).'),
+    ('body', 'IR            — Australian Bank Bills only (data).'),
+    ('body', 'COR           — Canadian CORRA only (data).'),
+    ('body', 'SFR Top15     — Most traded SOFR structures with sparklines + z-scores.'),
+    ('body', 'SFI Top15     — Most traded SONIA structures with sparklines + z-scores.'),
+    ('body', 'ER Top15      — Most traded Euribor structures with sparklines + z-scores.'),
+    ('body', 'IR Top15      — Most traded AUD Bank Bill structures with sparklines + z-scores.'),
+    ('body', 'COR Top15     — Most traded CORRA structures with sparklines + z-scores.'),
     ('', ''),
     ('head', 'TICKER FORMAT — CONFIRMED'),
-    ('body', 'Spreads:  SFR/SFI/IR/BA: {prefix}{near}{far}  e.g. SFRM6U6'),
-    ('body', '          ER: ER{near}ER{far}                  e.g. ERM6ERU6'),
-    ('body', 'Flies:    B{prefix}{near_wing}{far_wing}        e.g. BSFRM6Z6'),
+    ('body', 'Spreads:  SFR/SFI/COR: {prefix}{near}{far}      e.g. SFRM6U6 Comdty'),
+    ('body', '          ER/IR: {prefix}{near}{prefix}{far}     e.g. ERM6ERU6, IRM6IRU6 Comdty'),
+    ('body', 'Flies:    B{prefix}{near_wing}{far_wing}         e.g. BSFRM6Z6 Comdty'),
     ('body', '          (belly is implied; only near/far wings in ticker)'),
-    ('body', 'Condors:  C{prefix}{first}{last}               e.g. CSFRM6H7'),
+    ('body', 'Condors:  C{prefix}{first}{last}                 e.g. CSFRM6H7 Comdty'),
     ('body', '          SFR only — not listed for other products'),
     ('', ''),
     ('head', 'STRUCTURES'),
     ('body', 'Spreads:  3m / 6m / 9m / 12m / 18m / 24m / 36m tenors'),
     ('body', 'Flies:    equal-wing, spacing 3m / 6m / 9m / 12m'),
     ('body', 'Condors:  equal-wing, spacing 3m / 6m  (SFR only)'),
-    ('body', 'Packs:    SFR 1Y/2Y/3Y/4Y,  SFI 1Y/2Y/3Y'),
+    ('body', 'Packs:    SFR 1Y/2Y/3Y/4Y'),
+    ('body', 'Bundles:  SFI 1Y/2Y/3Y'),
     ('body', 'Basis:    ESTR vs Euribor (TKYER prefix, ER tab)'),
-    ('body', 'BA fly:   BBA prefix assumed — verify BBAM6Z6 in Bloomberg'),
     ('', ''),
     ('body', f'Total tickers: {len(universe)}'),
 ]
@@ -258,9 +460,6 @@ for ri, (style, text) in enumerate(notes):
         ws_n.write(ri, 1, text, body_fmt)
     else:
         ws_n.write(ri, 1, '', body_fmt)
-
-# Move Notes to front by writing it last and reordering isn't possible in xlsxwriter
-# — Notes will be rightmost tab; acceptable
 
 wb.close()
 print(f'Saved: {out}')
