@@ -389,6 +389,27 @@ def render_table_png(product, rows, dpi=120):
             f"{product} — Most Traded (Top 10)  ·  {cfg['label']}",
             fontsize=10.5, fontweight='bold', color='white', va='center', zorder=2)
 
+    # COEX logo — right-aligned in title bar
+    logo_path = Path(__file__).parent / 'coex_logo.png'
+    if logo_path.exists():
+        logo_img = plt.imread(str(logo_path))
+        logo_h_in = TITLE_H * 0.70          # logo takes 70% of title bar height
+        logo_ar   = logo_img.shape[1] / logo_img.shape[0]   # width / height
+        logo_w_in = logo_h_in * logo_ar
+        margin    = TITLE_H * 0.15
+        fx0 = (TOTAL_W - logo_w_in - margin) / TOTAL_W
+        fy0 = (TOTAL_H - TITLE_H + margin)   / TOTAL_H
+        fw  = logo_w_in / TOTAL_W
+        fh  = logo_h_in / TOTAL_H
+        ax_logo = fig.add_axes([fx0, fy0, fw, fh])
+        ax_logo.imshow(logo_img, aspect='auto')
+        ax_logo.axis('off')
+    else:
+        # Fallback: text brand mark when no logo file is present
+        ax.text(TOTAL_W - 0.12, TOTAL_H - TITLE_H * 0.5, 'COEX',
+                fontsize=9, fontweight='bold', color='white',
+                alpha=0.75, ha='right', va='center', zorder=2)
+
     # ── Column headers ────────────────────────────────────────────────────────
     y_hdr = TOTAL_H - TITLE_H - HDR_H
     x = 0
