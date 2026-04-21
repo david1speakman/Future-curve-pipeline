@@ -575,6 +575,36 @@ def build_email_html(images: dict) -> str:
     )
 
 
+# ── Outlook email send ───────────────────────────────────────────────────────
+def send_via_outlook(to: str, html_body: str, subject: str = None) -> bool:
+    """Send HTML email through the locally running Outlook (Windows only)."""
+    if sys.platform != 'win32':
+        print('  Outlook send is Windows-only.')
+        return False
+    try:
+        import win32com.client as win32
+    except ImportError:
+        print('  Install pywin32 first:  pip install pywin32')
+        return False
+
+    if subject is None:
+        subject = f'London Morning — Rate Structures  {date.today():%d %b %Y}'
+
+    try:
+        outlook = win32.Dispatch('Outlook.Application')
+        mail    = outlook.CreateItem(0)   # 0 = olMailItem
+        mail.To      = to
+        mail.Subject = subject
+        mail.HTMLBody = html_body
+        mail.Send()
+        print(f'  Email sent to {to}')
+        return True
+    except Exception as e:
+        print(f'  Outlook send failed: {e}')
+        print('  Make sure Outlook is running and you are logged in.')
+        return False
+
+
 # ── Bloomberg IB automation ───────────────────────────────────────────────────
 # Bloomberg Instant Messaging has no public API.  Options:
 #
@@ -642,6 +672,8 @@ def main():
                         help='Pull data direct from Bloomberg API (requires blpapi)')
     parser.add_argument('--ib-paste',       action='store_true',
                         help='Paste text table into Bloomberg IB window (Windows only)')
+    parser.add_argument('--send-to',        default=None, metavar='EMAIL',
+                        help='Send email via Outlook to this address (Windows only)')
     parser.add_argument('--out',          default='./output', metavar='DIR',
                         help='Output folder (default: ./output)')
     parser.add_argument('--dpi',          type=int, default=120,
@@ -714,6 +746,10 @@ def main():
     ib_path  = out_dir / f'morning_{stamp}_ib.txt'
     ib_path.write_text(ib_text, encoding='utf-8')
     print(f'IB text      :  {ib_path}')
+
+    if args.send_to:
+        print(f'\nSending email via Outlook to {args.send_to}...')
+        send_via_outlook(args.send_to, build_email_html(images))
 
     if args.ib_paste:
         print('\nPasting to Bloomberg IB...')
