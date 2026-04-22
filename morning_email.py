@@ -252,59 +252,84 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     Columns read: A ticker, B instrument, C last, D chg, E vol, F bid, G offer,
                   H zscore, J roll, K vol20d, L v_avg, M alert, P:AI history (20d).
     """
+    import time as _time
+
     try:
         import xlwings as xw
     except ImportError:
         raise RuntimeError('xlwings not installed — run: pip install xlwings')
 
+    def _com_read(fn, retries=15, delay=2):
+        """Retry a xlwings/COM call if Excel is temporarily busy."""
+        for attempt in range(retries):
+            try:
+                return fn()
+            except Exception as e:
+                msg = str(e)
+                if attempt < retries - 1 and any(
+                    code in msg for code in ['-2147418111', '-2147352567',
+                                             'rejected by callee', 'busy',
+                                             'does not support enumeration']
+                ):
+                    _time.sleep(delay)
+                else:
+                    raise
+
     tab = f'{product} Top10'
 
     # Attach to already-open workbook, or open it
     wb = None
-    for book in xw.books:
-        if 'Most.Traded.Universe' in book.name:
-            wb = book
-            break
+    try:
+        for book in xw.books:
+            if 'Most.Traded.Universe' in book.name:
+                wb = book
+                break
+    except Exception:
+        pass  # xw.books can fail if Excel is mid-calculation; wb stays None
 
     if wb is None:
         if excel_path is None:
             excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
-        print(f'    Opening {Path(excel_path).name} and waiting for Bloomberg to populate data...', flush=True)
+        print(f'    Opening {Path(excel_path).name} — waiting for Bloomberg...', flush=True)
         wb = xw.Book(str(excel_path))
-        # Poll until Bloomberg populates the first price cell (C3) or timeout after 90s
-        import time as _time
-        ws_check = wb.sheets[tab]
-        for _i in range(90):
+
+    # Poll until Bloomberg has populated C3 (last price) — up to 120s
+    ws_check = wb.sheets[tab]
+    for _i in range(120):
+        try:
             val = ws_check['C3'].value
             if val is not None and isinstance(val, (int, float)):
+                # Extra settle time so all cells finish calculating
+                _time.sleep(5)
                 break
-            _time.sleep(1)
-            if _i % 10 == 9:
-                print(f'    Still waiting for Bloomberg... ({_i+1}s)', flush=True)
-        else:
-            print('    Warning: Bloomberg may not have fully loaded — proceeding anyway.', flush=True)
+        except Exception:
+            pass
+        _time.sleep(1)
+        if _i % 15 == 14:
+            print(f'    Still waiting for Bloomberg... ({_i+1}s)', flush=True)
+    else:
+        print('    Warning: Bloomberg may not have fully loaded — proceeding anyway.', flush=True)
 
     ws = wb.sheets[tab]
     rows = []
 
     for r in range(3, 13):   # Excel rows 3-12 (data rows 1-10)
-        instr = ws[f'B{r}'].value
+        instr = _com_read(lambda r=r: ws[f'B{r}'].value)
         if not instr:
             continue
 
-        def _v(cell):
-            v = ws[cell].value
+        def _v(cell, r=r):
+            v = _com_read(lambda c=cell: ws[c].value)
             return float(v) if isinstance(v, (int, float)) else None
 
-        # 20-day history from cols P(16) to AI(35), 1-indexed
-        raw_hist = ws.range(f'P{r}:AI{r}').value or []
+        raw_hist = _com_read(lambda r=r: ws.range(f'P{r}:AI{r}').value) or []
         history  = [float(v) for v in raw_hist
                     if v is not None and isinstance(v, (int, float))]
 
-        alert = str(ws[f'M{r}'].value or '')
+        alert = str(_com_read(lambda r=r: ws[f'M{r}'].value) or '')
 
         rows.append(dict(
-            ticker=str(ws[f'A{r}'].value or f'{instr} Comdty'),
+            ticker=str(_com_read(lambda r=r: ws[f'A{r}'].value) or f'{instr} Comdty'),
             instrument=str(instr),
             last=_v(f'C{r}'),  chg=_v(f'D{r}'),    volume=_v(f'E{r}'),
             bid=_v(f'F{r}'),   offer=_v(f'G{r}'),   zscore=_v(f'H{r}'),
