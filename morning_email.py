@@ -261,14 +261,22 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     if excel_path is None:
         excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
 
-    # Attach to open workbook or open it fresh
-    wb  = xw.Book(str(excel_path))
+    # Attach to open workbook or open it — retry because Excel may be busy
+    # with Bloomberg at the moment we try to connect.
+    wb = None
+    for _attempt in range(30):
+        try:
+            wb = xw.Book(str(excel_path))
+            break
+        except Exception:
+            _time.sleep(2)
+    if wb is None:
+        raise RuntimeError('Could not attach to Excel after 60s — is Excel running?')
     app = wb.app
 
     # --- Synchronise Bloomberg ------------------------------------------------
-    # Poll C3 on this tab until Bloomberg has loaded at least the first price.
-    # This handles the case where the file was just opened and Bloomberg is
-    # still connecting.
+    # Poll C3 on this tab until Bloomberg has loaded at least the first price,
+    # then drain all remaining async queries and freeze calculation for a clean read.
     tab = f'{product} Top10'
     print(f'    Waiting for Bloomberg data on {tab}...', flush=True)
     for _i in range(120):
@@ -284,12 +292,12 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     else:
         print('    Warning: Bloomberg may not have loaded — proceeding anyway.', flush=True)
 
-    # Now ask Excel to finish ALL outstanding async queries (BDP/BDH/RTD),
-    # then freeze calculation so Bloomberg updates don't fire mid-read.
+    # Drain all outstanding async queries (BDP/BDH/RTD), then freeze so
+    # Bloomberg updates cannot fire while we read cells.
     try:
         app.api.CalculateUntilAsyncQueriesDone()
     except Exception:
-        _time.sleep(3)   # fallback settle if API unavailable
+        _time.sleep(3)
     app.calculation = 'manual'
     # --------------------------------------------------------------------------
 
