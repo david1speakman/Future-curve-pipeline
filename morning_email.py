@@ -264,14 +264,14 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     # Attach to open workbook or open it — retry because Excel may be busy
     # with Bloomberg at the moment we try to connect.
     wb = None
-    for _attempt in range(30):
+    for _attempt in range(60):
         try:
             wb = xw.Book(str(excel_path))
             break
         except Exception:
             _time.sleep(2)
     if wb is None:
-        raise RuntimeError('Could not attach to Excel after 60s — is Excel running?')
+        raise RuntimeError('Could not attach to Excel after 120s — is Excel running?')
     app = wb.app
 
     # --- Synchronise Bloomberg ------------------------------------------------
