@@ -248,7 +248,6 @@ def fetch_top10_bloomberg(product, n=10):
 def fetch_top10_excel(product, n=10, excel_path=None):
     """
     Read Top 10 data from the Most.Traded.Universe.xlsx workbook.
-    Bloomberg must have already populated the formulas (file open in Excel).
     Columns read: A ticker, B instrument, C last, D chg, E vol, F bid, G offer,
                   H zscore, J roll, K vol20d, L v_avg, M alert, P:AI history (20d).
     """
@@ -259,70 +258,72 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     except ImportError:
         raise RuntimeError('xlwings not installed — run: pip install xlwings')
 
-    _BUSY_CODES = ['-2147418111', '-2147352567', 'rejected by callee',
-                   'busy', 'does not support enumeration', 'NoneType']
-
-    def _com_retry(fn, retries=20, delay=2):
-        for attempt in range(retries):
-            try:
-                return fn()
-            except Exception as e:
-                if attempt < retries - 1 and any(c in str(e) for c in _BUSY_CODES):
-                    _time.sleep(delay)
-                else:
-                    raise
-
     if excel_path is None:
         excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
 
-    # xw.Book(path) attaches to an already-open workbook OR opens it — no enumeration needed.
-    # Wrap in retry because Excel may be busy when Bloomberg is loading.
-    wb = _com_retry(lambda: xw.Book(str(excel_path)), retries=30, delay=2)
+    # Attach to open workbook or open it fresh
+    wb  = xw.Book(str(excel_path))
+    app = wb.app
 
+    # --- Synchronise Bloomberg ------------------------------------------------
+    # Poll C3 on this tab until Bloomberg has loaded at least the first price.
+    # This handles the case where the file was just opened and Bloomberg is
+    # still connecting.
     tab = f'{product} Top10'
-
-    # Poll until Bloomberg has populated C3 (last price) on this tab — up to 120s
+    print(f'    Waiting for Bloomberg data on {tab}...', flush=True)
     for _i in range(120):
         try:
-            val = _com_retry(lambda: wb.sheets[tab]['C3'].value)
+            val = wb.sheets[tab]['C3'].value
             if val is not None and isinstance(val, (int, float)):
-                _time.sleep(3)   # short settle so remaining cells finish
                 break
         except Exception:
             pass
         _time.sleep(1)
         if _i % 15 == 14:
-            print(f'    Still waiting for Bloomberg... ({_i+1}s)', flush=True)
+            print(f'    Still waiting... ({_i+1}s)', flush=True)
     else:
-        print('    Warning: Bloomberg may not have fully loaded — proceeding anyway.', flush=True)
+        print('    Warning: Bloomberg may not have loaded — proceeding anyway.', flush=True)
 
-    ws = _com_retry(lambda: wb.sheets[tab])
-    rows = []
+    # Now ask Excel to finish ALL outstanding async queries (BDP/BDH/RTD),
+    # then freeze calculation so Bloomberg updates don't fire mid-read.
+    try:
+        app.api.CalculateUntilAsyncQueriesDone()
+    except Exception:
+        _time.sleep(3)   # fallback settle if API unavailable
+    app.calculation = 'manual'
+    # --------------------------------------------------------------------------
 
-    for r in range(3, 13):   # Excel rows 3-12 (data rows 1-10)
-        instr = _com_retry(lambda r=r: ws[f'B{r}'].value)
-        if not instr:
-            continue
+    try:
+        ws   = wb.sheets[tab]
+        rows = []
 
-        def _v(cell):
-            v = _com_retry(lambda c=cell: ws[c].value)
-            return float(v) if isinstance(v, (int, float)) else None
+        for r in range(3, 13):   # Excel rows 3-12 (data rows 1-10)
+            instr = ws[f'B{r}'].value
+            if not instr:
+                continue
 
-        raw_hist = _com_retry(lambda r=r: ws.range(f'P{r}:AI{r}').value) or []
-        history  = [float(v) for v in raw_hist
-                    if v is not None and isinstance(v, (int, float))]
+            def _v(cell):
+                v = ws[cell].value
+                return float(v) if isinstance(v, (int, float)) else None
 
-        alert = str(_com_retry(lambda r=r: ws[f'M{r}'].value) or '')
+            raw_hist = ws.range(f'P{r}:AI{r}').value or []
+            history  = [float(v) for v in raw_hist
+                        if v is not None and isinstance(v, (int, float))]
 
-        rows.append(dict(
-            ticker=str(_com_retry(lambda r=r: ws[f'A{r}'].value) or f'{instr} Comdty'),
-            instrument=str(instr),
-            last=_v(f'C{r}'),  chg=_v(f'D{r}'),    volume=_v(f'E{r}'),
-            bid=_v(f'F{r}'),   offer=_v(f'G{r}'),   zscore=_v(f'H{r}'),
-            history=history,
-            roll=_v(f'J{r}'),  vol20d=_v(f'K{r}'),  v_avg=_v(f'L{r}'),
-            alert=alert,
-        ))
+            alert = str(ws[f'M{r}'].value or '')
+
+            rows.append(dict(
+                ticker=str(ws[f'A{r}'].value or f'{instr} Comdty'),
+                instrument=str(instr),
+                last=_v(f'C{r}'),  chg=_v(f'D{r}'),    volume=_v(f'E{r}'),
+                bid=_v(f'F{r}'),   offer=_v(f'G{r}'),   zscore=_v(f'H{r}'),
+                history=history,
+                roll=_v(f'J{r}'),  vol20d=_v(f'K{r}'),  v_avg=_v(f'L{r}'),
+                alert=alert,
+            ))
+
+    finally:
+        app.calculation = 'automatic'   # always restore live updates
 
     if not rows:
         raise RuntimeError(
