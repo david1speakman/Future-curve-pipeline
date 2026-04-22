@@ -259,48 +259,34 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     except ImportError:
         raise RuntimeError('xlwings not installed — run: pip install xlwings')
 
-    def _com_read(fn, retries=15, delay=2):
-        """Retry a xlwings/COM call if Excel is temporarily busy."""
+    _BUSY_CODES = ['-2147418111', '-2147352567', 'rejected by callee',
+                   'busy', 'does not support enumeration', 'NoneType']
+
+    def _com_retry(fn, retries=20, delay=2):
         for attempt in range(retries):
             try:
                 return fn()
             except Exception as e:
-                msg = str(e)
-                if attempt < retries - 1 and any(
-                    code in msg for code in ['-2147418111', '-2147352567',
-                                             'rejected by callee', 'busy',
-                                             'does not support enumeration']
-                ):
+                if attempt < retries - 1 and any(c in str(e) for c in _BUSY_CODES):
                     _time.sleep(delay)
                 else:
                     raise
 
+    if excel_path is None:
+        excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
+
+    # xw.Book(path) attaches to an already-open workbook OR opens it — no enumeration needed.
+    # Wrap in retry because Excel may be busy when Bloomberg is loading.
+    wb = _com_retry(lambda: xw.Book(str(excel_path)), retries=30, delay=2)
+
     tab = f'{product} Top10'
 
-    # Attach to already-open workbook, or open it
-    wb = None
-    try:
-        for book in xw.books:
-            if 'Most.Traded.Universe' in book.name:
-                wb = book
-                break
-    except Exception:
-        pass  # xw.books can fail if Excel is mid-calculation; wb stays None
-
-    if wb is None:
-        if excel_path is None:
-            excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
-        print(f'    Opening {Path(excel_path).name} — waiting for Bloomberg...', flush=True)
-        wb = xw.Book(str(excel_path))
-
-    # Poll until Bloomberg has populated C3 (last price) — up to 120s
-    ws_check = wb.sheets[tab]
+    # Poll until Bloomberg has populated C3 (last price) on this tab — up to 120s
     for _i in range(120):
         try:
-            val = ws_check['C3'].value
+            val = _com_retry(lambda: wb.sheets[tab]['C3'].value)
             if val is not None and isinstance(val, (int, float)):
-                # Extra settle time so all cells finish calculating
-                _time.sleep(5)
+                _time.sleep(3)   # short settle so remaining cells finish
                 break
         except Exception:
             pass
@@ -310,26 +296,26 @@ def fetch_top10_excel(product, n=10, excel_path=None):
     else:
         print('    Warning: Bloomberg may not have fully loaded — proceeding anyway.', flush=True)
 
-    ws = wb.sheets[tab]
+    ws = _com_retry(lambda: wb.sheets[tab])
     rows = []
 
     for r in range(3, 13):   # Excel rows 3-12 (data rows 1-10)
-        instr = _com_read(lambda r=r: ws[f'B{r}'].value)
+        instr = _com_retry(lambda r=r: ws[f'B{r}'].value)
         if not instr:
             continue
 
-        def _v(cell, r=r):
-            v = _com_read(lambda c=cell: ws[c].value)
+        def _v(cell):
+            v = _com_retry(lambda c=cell: ws[c].value)
             return float(v) if isinstance(v, (int, float)) else None
 
-        raw_hist = _com_read(lambda r=r: ws.range(f'P{r}:AI{r}').value) or []
+        raw_hist = _com_retry(lambda r=r: ws.range(f'P{r}:AI{r}').value) or []
         history  = [float(v) for v in raw_hist
                     if v is not None and isinstance(v, (int, float))]
 
-        alert = str(_com_read(lambda r=r: ws[f'M{r}'].value) or '')
+        alert = str(_com_retry(lambda r=r: ws[f'M{r}'].value) or '')
 
         rows.append(dict(
-            ticker=str(_com_read(lambda r=r: ws[f'A{r}'].value) or f'{instr} Comdty'),
+            ticker=str(_com_retry(lambda r=r: ws[f'A{r}'].value) or f'{instr} Comdty'),
             instrument=str(instr),
             last=_v(f'C{r}'),  chg=_v(f'D{r}'),    volume=_v(f'E{r}'),
             bid=_v(f'F{r}'),   offer=_v(f'G{r}'),   zscore=_v(f'H{r}'),
