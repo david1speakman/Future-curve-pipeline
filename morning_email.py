@@ -245,7 +245,7 @@ def fetch_top10_bloomberg(product, n=10):
 
 
 # ── Excel fetch via xlwings (reads Bloomberg-populated values from open workbook) ──
-def fetch_top10_excel(product, excel_path=None):
+def fetch_top10_excel(product, n=10, excel_path=None):
     """
     Read Top 10 data from the Most.Traded.Universe.xlsx workbook.
     Bloomberg must have already populated the formulas (file open in Excel).
@@ -269,10 +269,20 @@ def fetch_top10_excel(product, excel_path=None):
     if wb is None:
         if excel_path is None:
             excel_path = Path(__file__).parent / 'Workbook' / 'Most.Traded.Universe.xlsx'
-        print(f'\n    Opening {Path(excel_path).name} — wait for Bloomberg to load, '
-              f'then press Enter...', flush=True)
+        print(f'    Opening {Path(excel_path).name} and waiting for Bloomberg to populate data...', flush=True)
         wb = xw.Book(str(excel_path))
-        input()   # give the user time to let Bloomberg populate
+        # Poll until Bloomberg populates the first price cell (C3) or timeout after 90s
+        import time as _time
+        ws_check = wb.sheets[tab]
+        for _i in range(90):
+            val = ws_check['C3'].value
+            if val is not None and isinstance(val, (int, float)):
+                break
+            _time.sleep(1)
+            if _i % 10 == 9:
+                print(f'    Still waiting for Bloomberg... ({_i+1}s)', flush=True)
+        else:
+            print('    Warning: Bloomberg may not have fully loaded — proceeding anyway.', flush=True)
 
     ws = wb.sheets[tab]
     rows = []
